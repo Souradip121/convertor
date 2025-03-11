@@ -1,0 +1,8 @@
+rasterio
+watchdog
+configparser
+GDAL
+numpy
+pillow
+pytest
+tqdm
