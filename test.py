@@ -3,7 +3,9 @@ import h5py as h5
 import sys
 import os
 from osgeo import gdal
+from osgeo import osr
 import os
+import pyproj
 from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 
@@ -11,20 +13,23 @@ import time
 from datetime import datetime
 #from geos_gtif import create_geotif
 import cartopy.io.shapereader as shpreader
-import cartopy.feature as cfeature
+from cartopy.feature import ShapelyFaature
+import cartopy
 import cartopy.crs as ccrs
+import configparser
 import json
 import re
 
-logs_dir = '/usr/local/logs/CogGen/'
+logs_dir = './logs'
 
 def write_log(rule, message, level='INFO'):
     log_file_name = get_dynamic_log_file_name(rule)
-    log_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_entry = f"{log_time} [{level}] {rule}: {message}\n"
-    log_file_path = os.path.join(logs_dir, log_file_name)
-    with open(log_file_path, 'a') as log_file:
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_entry = f"{timestamp} - {level} - {rule} - {message}\n"
+    # log_file_path = os.path.join(logs_dir, log_file_name)
+    with open(log_file_name, 'a') as log_file:
         log_file.write(log_entry)
+    log_file.close()
 
 def get_dynamic_log_file_name(rule='COGGEN'):
     now = datetime.now()
@@ -34,7 +39,7 @@ class EventHandler(FileSystemEventHandler):
 
     #product_code = ['DHI', 'DNI', 'GHI', 'INS', 'GHI_DLY', 'DNI_DLY', 'DHI_DLY', 'INS_DLY', 'HEM_DLY', 'AOD']
 
-    month_names = {'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6, 'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12}
+    Months = {'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6, 'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12}
 
     #lpp_code = ['T2', 'T2S1', 'T2S2', 'T2S3', 'T2S1P1', 'T2S1P2', 'T2S1P3', 'T2S1P4', 'T2S1P5']
     #product_path = {
@@ -51,10 +56,10 @@ class EventHandler(FileSystemEventHandler):
         self.sat_code = sat_code
 
     def create_directory(self, filename, scode):
-        pattern = r"(\d{2})([A-Z]{3})(\d{4})_(\d{4})"  # 29MAR2024_0000
-        pattern2 = r"^.*(_L3B.*)"  # 3DIMG_29MAR2024_0000_L3B_
-        pattern3 = r"^.*(_L3.*)"  # 3DIMG
-        pattern4 = r"\d{2}/\d{2}"
+        pattern = r"_(\d{2})([A-Z]{3})(\d{4})_(\d{4})_"  # 29MAR2024_0000
+        pattern2 = r"^([^_]+_){4}"  # 3DIMG_29MAR2024_0000_L3B_
+        pattern3 = r"^([^_]+){1}"  # 3DIMG
+        pattern4 = r"V(\d{2})R(\d{2})"  # V01R00
 
         mtch = re.search(pattern, filename)
         mtch_2 = re.search(pattern2, filename)
@@ -66,19 +71,19 @@ class EventHandler(FileSystemEventHandler):
             sector_name = re.search(r'LIC_(.*?)_V', filename).group(1)
 
         dirpath = None
-        if mtch_3:
+        if mtch :
             DD, MMM, YYYY, HHMM = mtch.groups()
-            d = datetime.strptime(str.format('%s%s%s%s'%(DD,MMM,YYYY,HHMM)), '%d%b%Y%H%M')
+            dt = datetime.strptime(str.format('%s%s%s%s'%(DD,MMM,YYYY,HHMM)), '%d%b%Y%H%M')
 
         if mtch_3.group(0) in self.sat_code:
             dirpath = os.path.join(self.outputdir, mtch_3.group(0), str(YYYY), '%2d'%(self.Months[MMM]), '%2d'%(int(DD)))
 
         os.makedirs(dirpath, exist_ok=True)
-        tmstr = str.format('%s.%2d.%2d%S%P%s'%(YYYY,self.Months[MMM],int(DD),HHMM,HHMM))
-        tfilename = f"{mtch_2.group(0)}_{scode}_{mtch_4.group(0)}.tif"
+        tmstr = str.format('%s%.2d%.2d%sP%s'%(YYYY,self.Months[MMM],int(DD),HHMM,HHMM))
+        tfilename = f"{mtch_2.group(0)}{sector_name}_{scode}_{mtch_4.group(0)}.tif"
 
         if 'LIC' in filename:
-            tfilename = f"{mtch_2.group(0)}_{sector_name}_{scode}_{mtch_4.group(0)}.tif"
+            tfilename = f"{mtch_2.group(0)}{sector_name}_{scode}_{mtch_4.group(0)}.tif"
 
         return dirpath, tfilename
 
@@ -241,7 +246,7 @@ def write_toa_geotiff(l3c_hdf_filename, dataset, l3c_geotiff_filename):
 
     if chain in [1, 6, 5]:
         globe = ccrs.Globe(semimajor_axis=6378137.0, semiminor_axis=6356752.31414)
-        chain_key = "35IMG"
+        chain_key = "3SIMG"
         proj = ccrs.Geostationary(central_longitude=-74.0, satellite_height=35785831, false_easting=0, false_northing=0, sweep_axis='x', globe=globe)
         if chain == 35IMG:
             proj = ccrs.Geostationary(central_longitude=-74.0, satellite_height=35785831, false_easting=0, false_northing=0, sweep_axis='x', globe=globe)
@@ -277,7 +282,7 @@ def write_toa_geotiff(l3c_hdf_filename, dataset, l3c_geotiff_filename):
     os.remove(inter_gtif)
     
     # Create COG after GeoTIFF
-    create_cog(geotiff_filename)
+    # create_cog(geotiff_filename)
 
 def create_gridded_geotiff(hdf_filename, dataset, geotiff_filename):
     flt = h5.File(hdf_filename)
